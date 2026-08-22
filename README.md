@@ -40,6 +40,11 @@ This repository contains the code for training and fine-tuning vision-language m
 
 ## 🚀 Recent Updates
 
+### August 2026
+- 📝 Released the **OpenVision 2 caption text decoders**: every `*-vision-only` repo now also
+  ships the jointly-trained decoder, so encoder + decoder form the full **image→caption** model.
+  See [Generate Captions](#-generate-captions-full-generative-model) and [`caption.py`](caption.py).
+
 ### January 2026
 - ✨ Released **OpenVision 3**: a unified visual encoder for both understanding and generation. 
   - Please refer to the [script](https://github.com/UCSC-VLAA/OpenVision/blob/main/scripts/train_openvision_3.sh) for OpenVision 3 usage.
@@ -148,6 +153,49 @@ with torch.no_grad():
 
 print("Patch feature shape:", patch_features.shape)
 ```
+
+## 📝 Generate Captions (Full Generative Model)
+
+Every OpenVision 2 `*-vision-only` repo now **also ships the caption text decoder** it was
+jointly trained with, so the encoder + decoder together form the full image→caption model.
+The decoder is a concat / prefix-LM autoregressive transformer (the image patch tokens are
+prepended as a bidirectional prefix; text is generated causally). Each repo contains
+`caption_decoder.safetensors`, `text_decoder_config.json`, and `modeling_openvision2_decoder.py`.
+
+One-command demo (downloads encoder + decoder from the Hub; resolution is read automatically):
+
+```bash
+python caption.py --repo UCSC-VLAA/openvision2-vit-large-patch14-224-vision-only --image your.jpg
+```
+
+Or in code:
+
+```python
+import json, torch, numpy as np
+from PIL import Image
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
+from src.convert_upload.open_clip.factory import create_vision_encoder_and_transforms
+from src.convert_upload.modeling_openvision2_decoder import (
+    OpenVision2TextDecoder, OpenVision2TextDecoderConfig)
+
+repo = "UCSC-VLAA/openvision2-vit-large-patch14-224-vision-only"
+enc = create_vision_encoder_and_transforms(model_name=f"hf-hub:{repo}").eval()
+d = json.load(open(hf_hub_download(repo, "text_decoder_config.json")))
+dec = OpenVision2TextDecoder(OpenVision2TextDecoderConfig(
+    width=d["width"], depth=d["depth"], num_heads=d["num_heads"], mlp_dim=d["mlp_dim"],
+    vocab_size=d["vocab_size"], vision_width=d["vision_width"]))
+dec.load_state_dict(load_file(hf_hub_download(repo, "caption_decoder.safetensors"))); dec.eval()
+
+# image (ImageNet-normalized, NCHW) -> patch tokens -> caption ids
+img = torch.randn(1, 3, 224, 224)  # replace with a preprocessed image; see caption.py
+with torch.no_grad():
+    _, patch_tokens = enc(img)
+    ids = dec.generate(patch_tokens, bos_id=1, eos_id=2, max_len=64)[0].tolist()
+# decode ids with assets/bert_base_vocab_bos_eos.txt (see caption.py: detokenize)
+```
+
+See [`caption.py`](caption.py) for image preprocessing and WordPiece detokenization.
 
 
 ## 📊 Model Zoo (OpenVision)
